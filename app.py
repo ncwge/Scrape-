@@ -27,7 +27,7 @@ if st.button("Fetch") and sku:
         st.error(f"Failed to load product page: {e}")
     else:
         soup = BeautifulSoup(html, "html.parser")
-        # Find embedded JSON-LD for Product
+                # Attempt embedded JSON-LD for Product
         ld_json = None
         for tag in soup.select('script[type="application/ld+json"]'):
             try:
@@ -42,14 +42,21 @@ if st.button("Fetch") and sku:
             if ld_json:
                 break
 
-        if not ld_json:
-            st.error("Product metadata not found on page.")
-        else:
+        if ld_json:
             brand = ld_json.get('brand', {}).get('name', 'n/a')
             model = ld_json.get('sku', sku)
             description = ld_json.get('description', 'n/a')
+        else:
+            # Fallback: parse page <title> (format: "Brand Model Description | AJMadison")
+            title = soup.title.string if soup.title else ''
+            main = title.split('|')[0].strip()
+            parts = main.split(' ', 2)
+            brand = parts[0] if len(parts) > 0 else 'n/a'
+            model = parts[1] if len(parts) > 1 else sku
+            description = parts[2] if len(parts) > 2 else 'n/a'
 
-            st.subheader("Results")
-            st.write(f"**Brand:** {brand}")
-            st.write(f"**Model:** {model}")
-            st.write(f"**Description:** {description}")
+        # Display results
+        st.subheader("Results")
+        st.write(f"**Brand:** {brand}")
+        st.write(f"**Model:** {model}")
+        st.write(f"**Description:** {description}")
