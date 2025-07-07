@@ -71,13 +71,12 @@ def scrape_specs(soup: BeautifulSoup) -> dict:
 st.header("Batch Competitor SKU Extractor")
 col1, col2 = st.columns(2)
 with col1:
-    uploaded = st.file_uploader("Upload Excel file of SKUs", type=["xls","xlsx"] )
+    uploaded = st.file_uploader("Upload Excel file of SKUs", type=["xls","xlsx"])  
 with col2:
-    pasted = st.text_area("Or paste SKUs here (one per line)")
+    pasted  = st.text_area("Or paste SKUs here (one per line)")
 
-skus = []
+# Determine SKUs list
 if uploaded:
-    # Read uploaded file into BytesIO to ensure compatibility
     file_bytes = uploaded.read()
     try:
         df_in = pd.read_excel(BytesIO(file_bytes), header=None, engine='openpyxl')
@@ -88,27 +87,48 @@ elif pasted:
     skus = extract_skus_from_text(pasted)
 else:
     skus = []
-    skus = []
-    skus = extract_skus_from_text(pasted)
 
+# Display batch results
+# Initialize a persistent session to avoid 403s
+session = requests.Session()
+session.headers.update({
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Referer": "https://www.ajmadison.com/",
+    "Connection": "keep-alive",
+})
+# Prime the session with a homepage request
+try:
+    session.get("https://www.ajmadison.com/", timeout=10)
+except:
+    pass
+
+import time
 if skus:
     st.success(f"Found {len(skus)} SKUs.")
     for sku in skus:
         with st.expander(f"Details for {sku}"):
             try:
-                resp = requests.get(f"https://www.ajmadison.com/cgi-bin/ajmadison/{sku}.html",
-                                     headers={"User-Agent":"Mozilla/5.0"}, timeout=10)
+                resp = session.get(
+                    f"https://www.ajmadison.com/cgi-bin/ajmadison/{sku}.html",
+                    timeout=10
+                )
                 resp.raise_for_status()
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 specs = scrape_specs(soup)
                 if specs:
-                    df_specs = pd.DataFrame([{"Attribute":k.replace('_',' ').capitalize(), "Value":v}
-                                              for k,v in specs.items()])
+                    df_specs = pd.DataFrame([
+                        {"Attribute": k.replace('_',' ').capitalize(), "Value": v}
+                        for k,v in specs.items()
+                    ])
                     st.table(df_specs)
                 else:
                     st.warning("No specs found.")
             except Exception as e:
                 st.error(f"Failed to fetch {sku}: {e}")
+            time.sleep(0.5)
 else:
     st.info("Upload or paste SKUs to begin batch extraction.")
 
@@ -119,16 +139,28 @@ single_sku = st.text_input("Enter single SKU (e.g. JVX3300SJSS)").strip().upper(
 if st.button("Fetch Single SKU") and single_sku:
     st.info(f"Fetching details for {single_sku}...")
     try:
-        resp = requests.get(f"https://www.ajmadison.com/cgi-bin/ajmadison/{single_sku}.html",
-                             headers={"User-Agent":"Mozilla/5.0"}, timeout=10)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Referer": "https://www.ajmadison.com/"
+        }
+        resp = requests.get(
+            f"https://www.ajmadison.com/cgi-bin/ajmadison/{single_sku}.html",
+            headers=headers,
+            timeout=10
+        )
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, 'html.parser')
         specs = scrape_specs(soup)
         if specs:
-            df_single = pd.DataFrame([{"Attribute":k.replace('_',' ').capitalize(), "Value":v}
-                                       for k,v in specs.items()])
+            df_single = pd.DataFrame([
+                {"Attribute": k.replace('_',' ').capitalize(), "Value": v}
+                for k,v in specs.items()
+            ])
             st.table(df_single)
         else:
             st.warning("No specs found.")
+    except requests.exceptions.HTTPError as http_err:
+        st.error(f"HTTP error for {single_sku}: {http_err}")
     except Exception as e:
         st.error(f"Failed to fetch {single_sku}: {e}")
