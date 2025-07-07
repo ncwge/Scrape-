@@ -6,97 +6,120 @@ from bs4 import BeautifulSoup
 import pandas as pd
 from io import BytesIO
 
-st.set_page_config(page_title="Competitor SKU Extractor", layout="centered")
-st.title("Competitor SKU Extractor")
+# --- Page Setup ---
+st.set_page_config(page_title="AJMadison SKU Lookup & Batch Extractor", layout="centered")
+st.title("AJMadison SKU Lookup & Batch Extractor")
 
-# --- SKU Input Utility ---
+# --- SKU Input Utilities ---
 @st.cache_data
 def extract_skus_from_excel(df: pd.DataFrame) -> list:
-    all_text = df.astype(str).values.flatten()
-    sku_pattern = re.compile(r"\b[A-Z]{2,}[0-9]{2,}[A-Z0-9]*\b")
+    pattern = re.compile(r"\b[A-Z]{2,}[0-9]{2,}[A-Z0-9]*\b")
     skus, seen = [], set()
-    for text in all_text:
-        for match in sku_pattern.findall(text):
-            if len(match) >= 6 and match not in seen:
-                skus.append(match)
-                seen.add(match)
+    for text in df.astype(str).values.flatten():
+        for m in pattern.findall(text):
+            if len(m) >= 6 and m not in seen:
+                skus.append(m)
+                seen.add(m)
     return skus
 
 @st.cache_data
 def extract_skus_from_text(text: str) -> list:
-    sku_pattern = re.compile(r"\b[A-Z]{2,}[0-9]{2,}[A-Z0-9]*\b")
+    pattern = re.compile(r"\b[A-Z]{2,}[0-9]{2,}[A-Z0-9]*\b")
     skus, seen = [], set()
     for line in text.upper().splitlines():
-        for sku in sku_pattern.findall(line):
-            if len(sku) >= 6 and sku not in seen:
-                skus.append(sku)
-                seen.add(sku)
+        for m in pattern.findall(line):
+            if len(m) >= 6 and m not in seen:
+                skus.append(m)
+                seen.add(m)
     return skus
 
-# --- Sidebar & Spec scraping utility ---
+# --- Spec Scraper ---
 def scrape_specs(soup: BeautifulSoup) -> dict:
     data = {}
+    # scrape all dl dt/dd pairs
     for dl in soup.find_all('dl'):
         for dt, dd in zip(dl.find_all('dt'), dl.find_all('dd')):
             key = dt.get_text(strip=True).rstrip(':').lower().replace(' ', '_')
             data[key] = dd.get_text(strip=True)
+    # scrape bold black spans
     for span in soup.select('span.bold.black'):
         label = span.get_text(strip=True).rstrip(':')
         parent = span.parent
         full = parent.get_text(separator=' ', strip=True)
         value = full[len(span.get_text()):].strip()
-        key = label.lower().replace(' ', '_')
         if value:
-            data[key] = value
-    offer_table = soup.select_one('table[itemtype="https://schema.org/Offer"]')
-    if offer_table:
-        for tr in offer_table.select('tr'):
+            data[label.lower().replace(' ', '_')] = value
+    # list price
+    offer = soup.select_one('table[itemtype="https://schema.org/Offer"]')
+    if offer:
+        for tr in offer.select('tr'):
             tds = tr.find_all('td')
-            if len(tds) < 2:
-                continue
-            label_text = tds[0].get_text(strip=True).rstrip(':').lower()
-            if label_text == 'list price':
+            if len(tds) < 2: continue
+            label = tds[0].get_text(strip=True).rstrip(':').lower()
+            if label == 'list price':
                 price_td = tds[1]
                 del_tag = price_td.find('del')
-                if del_tag:
-                    price = del_tag.get_text(strip=True)
-                else:
-                    meta = price_td.find('meta', {'itemprop':'price'})
-                    price = meta['content'] if meta else price_td.get_text(strip=True)
+                price = del_tag.get_text(strip=True) if del_tag else (
+                    price_td.find('meta', {'itemprop':'price'})['content']
+                    if price_td.find('meta', {'itemprop':'price'}) else price_td.get_text(strip=True)
+                )
                 data['list_price'] = price
                 break
     return data
 
-# --- UI: SKU ingestion ---
-st.header("Step 1: Enter Competitor SKUs")
-uploaded_file = st.file_uploader("Upload Excel file with SKUs", type=["xlsx","xls"] )
-pasted_data = st.text_area("Or paste SKU data here:")
-skus = []
-if uploaded_file:
-    df_upload = pd.read_excel(uploaded_file, header=None)
-    skus = extract_skus_from_excel(df_upload)
-elif pasted_data.strip():
-    skus = extract_skus_from_text(pasted_data)
+# --- UI: Batch Extractor ---
+st.header("Batch Competitor SKU Extractor")
+col1, col2 = st.columns(2)
+with col1:
+    uploaded = st.file_uploader("Upload Excel file of SKUs", type=["xls","xlsx"] )
+with col2:
+    pasted = st.text_area("Or paste SKUs here (one per line)")
 
-if not skus:
-    st.info("Please upload a file or paste SKU data to proceed.")
-else:
-    st.success(f"✅ Found {len(skus)} unique SKUs.")
-    # Display list and allow expanding details per SKU
+skus = []
+if uploaded:
+    df_in = pd.read_excel(uploaded, header=None)
+    skus = extract_skus_from_excel(df_in)
+elif pasted:
+    skus = extract_skus_from_text(pasted)
+
+if skus:
+    st.success(f"Found {len(skus)} SKUs.")
     for sku in skus:
         with st.expander(f"Details for {sku}"):
-            st.write(f"Fetching data for {sku}...")
-            url = f"https://www.ajmadison.com/cgi-bin/ajmadison/{sku}.html"
             try:
-                resp = requests.get(url, headers={"User-Agent":"Mozilla/5.0"}, timeout=10)
+                resp = requests.get(f"https://www.ajmadison.com/cgi-bin/ajmadison/{sku}.html",
+                                     headers={"User-Agent":"Mozilla/5.0"}, timeout=10)
                 resp.raise_for_status()
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 specs = scrape_specs(soup)
                 if specs:
-                    rows = [{"Attribute": k.replace('_',' ').capitalize(), "Value": v} for k,v in specs.items()]
-                    df = pd.DataFrame(rows)
-                    st.table(df)
+                    df_specs = pd.DataFrame([{"Attribute":k.replace('_',' ').capitalize(), "Value":v}
+                                              for k,v in specs.items()])
+                    st.table(df_specs)
                 else:
-                    st.warning("No attributes found for this SKU.")
+                    st.warning("No specs found.")
             except Exception as e:
                 st.error(f"Failed to fetch {sku}: {e}")
+else:
+    st.info("Upload or paste SKUs to begin batch extraction.")
+
+# --- UI: Single SKU Lookup ---
+st.markdown("---")
+st.header("Single AJMadison SKU Lookup")
+single_sku = st.text_input("Enter single SKU (e.g. JVX3300SJSS)").strip().upper()
+if st.button("Fetch Single SKU") and single_sku:
+    st.info(f"Fetching details for {single_sku}...")
+    try:
+        resp = requests.get(f"https://www.ajmadison.com/cgi-bin/ajmadison/{single_sku}.html",
+                             headers={"User-Agent":"Mozilla/5.0"}, timeout=10)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        specs = scrape_specs(soup)
+        if specs:
+            df_single = pd.DataFrame([{"Attribute":k.replace('_',' ').capitalize(), "Value":v}
+                                       for k,v in specs.items()])
+            st.table(df_single)
+        else:
+            st.warning("No specs found.")
+    except Exception as e:
+        st.error(f"Failed to fetch {single_sku}: {e}")
