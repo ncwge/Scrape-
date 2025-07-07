@@ -12,6 +12,7 @@ if st.button("Fetch") and sku:
     st.info(f"Looking up SKU: {sku}")
     # 1. Try official JSON index endpoint
     details = {}
+    source = None
     try:
         json_url = f"https://www.ajmadison.com/cgi-bin/ajmadison/packages.index.json.php?sku={sku}"
         resp = requests.get(json_url, timeout=5)
@@ -84,7 +85,7 @@ if st.button("Fetch") and sku:
     except Exception:
         pass
 
-        # Display results
+    # Display results
     st.subheader("Results")
     if details:
         for k, v in details.items():
