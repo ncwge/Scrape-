@@ -21,10 +21,11 @@ if st.button("Fetch") and sku:
     else:
         soup = BeautifulSoup(html, "html.parser")
 
-        # Extract Brand & Model from page <title>
+        # Extract Brand, Model & Description from page <title>
         title = soup.title.string if soup.title else ''
-        # Title typically: "Brand Model Description | AJMadison"
-        parts = title.split('|')[0].split(' ', 2)
+        # Title format: "Brand Model Description | AJMadison"
+        main = title.split('|')[0].strip()
+        parts = main.split(' ', 2)
         brand = parts[0] if len(parts) > 0 else 'n/a'
         model = parts[1] if len(parts) > 1 else sku
         description = parts[2] if len(parts) > 2 else 'n/a'
@@ -34,32 +35,3 @@ if st.button("Fetch") and sku:
         st.write(f"**Brand:** {brand}")
         st.write(f"**Model:** {model}")
         st.write(f"**Description:** {description}")
-
-        # Now parse the "Quick Specs" section under the ratings
-        specs = {}
-        # Find the heading containing "Quick Specs"
-        heading = soup.find(lambda tag: tag.name in ["h2","strong","b","div"] and "quick specs" in tag.get_text(strip=True).lower())
-        if heading:
-            # The quick specs are typically in a nearby dl
-            container = heading.find_next_sibling()
-            if container and container.name == 'dl':
-                for dt, dd in zip(container.find_all('dt'), container.find_all('dd')):
-                    label = dt.get_text(strip=True).rstrip(':')
-                    value = dd.get_text(strip=True)
-                    specs[label] = value
-            else:
-                # fallback: look for dt/dd pairs after heading
-                for dt in soup.find_all('dt'):
-                    if dt.find_previous(text=lambda t: 'quick specs' in t.lower()):
-                        dd = dt.find_next_sibling('dd')
-                        if dd:
-                            label = dt.get_text(strip=True).rstrip(':')
-                            specs[label] = dd.get_text(strip=True)
-
-        # Display Quick Specs
-        if specs:
-            st.subheader("Quick Specs")
-            for label, value in specs.items():
-                st.write(f"**{label}:** {value}")
-        else:
-            st.info("No Quick Specs found on the page.")
