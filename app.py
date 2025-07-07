@@ -8,36 +8,6 @@ import pandas as pd
 st.set_page_config(page_title="AJMadison SKU Lookup", layout="centered")
 st.title("AJMadison SKU Lookup")
 
-# --- Parsing utility ---
-def parse_desc(desc: str) -> dict:
-    """
-    Rule-based parser to extract key features from a free-text description.
-    """
-    text = desc.lower()
-    tokens = re.split(r',| and ', text)
-    attrs = {}
-    # Generic
-    if m := re.search(r"(\d+(?:\.\d+)?)\s*cu\.?\s*ft", text): attrs['capacity'] = m.group(0)
-    if m := re.search(r"(\d+)\s*inch", text): attrs['size'] = m.group(0)
-    # Color
-    for color in ('black','white','stainless steel','gray','silver','white-on-white'):
-        if color in text: attrs['color'] = color; break
-    # Appliance type
-    for app in ('microwave','range hood','dishwasher','refrigerator','oven','cooktop','washer','dryer'):
-        if app in text: attrs['appliance'] = app; break
-    # Description features
-    for t in tokens:
-        t = t.strip()
-        if 'cfm' in t: attrs.setdefault('blower', []).append(t)
-        elif 'speed' in t: attrs.setdefault('speeds', []).append(t)
-        elif 'lighting' in t: attrs.setdefault('lighting', []).append(t)
-        elif 'filter' in t: attrs.setdefault('filters', []).append(t)
-        elif re.search(r'\d+-minute', t): attrs.setdefault('install_time', []).append(t)
-        elif 'convertible' in t: attrs['venting'] = 'convertible'
-        elif 'cook' in t: attrs.setdefault('features', []).append(t)
-        elif 'ul listed' in t or 'cul listed' in t: attrs.setdefault('certifications', []).append(t)
-    return attrs
-
 # --- Sidebar & Spec scraping utility ---
 def scrape_specs(soup: BeautifulSoup) -> dict:
     """
@@ -53,9 +23,7 @@ def scrape_specs(soup: BeautifulSoup) -> dict:
     for span in soup.select('span.bold.black'):
         label = span.get_text(strip=True).rstrip(':')
         parent = span.parent
-        # get the rest of the text in the parent, after the span
         full = parent.get_text(separator=' ', strip=True)
-        # remove the label from the full text
         value = full[len(span.get_text()):].strip()
         key = label.lower().replace(' ', '_')
         if value:
@@ -80,40 +48,13 @@ if st.button("Fetch") and sku:
         st.error(f"Failed to load product page: {e}")
     else:
         soup = BeautifulSoup(html, "html.parser")
-        # JSON-LD fallback
-        ld_json = None
-        for tag in soup.select('script[type="application/ld+json"]'):
-            try:
-                d = json.loads(tag.string or tag.text)
-            except:
-                continue
-            recs = d if isinstance(d, list) else [d]
-            for rec in recs:
-                if rec.get("@type") == "Product":
-                    ld_json = rec
-                    break
-            if ld_json:
-                break
-        if ld_json:
-            brand = ld_json.get('brand', {}).get('name', 'n/a')
-            model = ld_json.get('sku', sku)
-            description = ld_json.get('description', 'n/a')
-        else:
-            title = soup.title.string if soup.title else ''
-            main = title.split('|')[0].strip()
-            parts = main.split(' ', 2)
-            brand, model, description = (parts + [sku, 'n/a'])[:3]
-        st.subheader("Results")
-        st.write(f"**Brand:** {brand}")
-        st.write(f"**Model:** {model}")
-        st.write(f"**Description:** {description}")
-        # Combine parsed description and scraped specs
-        parsed = parse_desc(description)
+        # Extract specs only
         specs = scrape_specs(soup)
-        combined = {**specs, **parsed}
-        if combined:
+
+        if specs:
             st.subheader("All Extracted Attributes")
-            rows = [{"Attribute": k.replace('_', ' ').capitalize(), "Value": v} for k, v in combined.items()]
+            rows = [{"Attribute": k.replace('_', ' ').capitalize(), "Value": v}
+                    for k, v in specs.items()]
             df = pd.DataFrame(rows)
             st.table(df)
         else:
