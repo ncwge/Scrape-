@@ -13,7 +13,7 @@ def parse_desc(desc: str) -> dict:
     """
     Rule-based parser to extract attributes from any appliance description.
     Returns a dict of features like size, capacity, mount, blower, speeds, lighting, filters,
-    install_time, venting, certifications, finish, and appliance type.
+    install_time, venting, certifications, finish, color, and appliance type.
     """
     text = desc.lower()
     tokens = re.split(r',| and ', text)
@@ -24,6 +24,14 @@ def parse_desc(desc: str) -> dict:
         attrs['capacity'] = m.group(0)
     if m := re.search(r"(\d+)\s*inch", text):
         attrs['size'] = m.group(0)
+
+    # Detect color/finish
+    colors = ['black', 'white', 'stainless steel', 'gray', 'silver', 'white-on-white']
+    for color in colors:
+        if color in text:
+            attrs['color'] = color
+            break
+
     # Appliance type
     for appliance in ('microwave', 'range hood', 'dishwasher', 'refrigerator', 'oven', 'cooktop', 'washer', 'dryer'):
         if appliance in text:
@@ -57,6 +65,7 @@ def parse_desc(desc: str) -> dict:
             attrs.setdefault('features', []).append('auto cook')
         elif any(cert in t for cert in ('ul listed', 'cul listed', 'list')):
             attrs.setdefault('certifications', []).append(t)
+        # Additional color fallback: if finish mentioned separately
         elif 'stainless steel' in t:
             attrs['finish'] = 'stainless steel'
         # add more generic rules as needed
