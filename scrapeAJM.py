@@ -77,6 +77,14 @@ with col2:
 
 skus = []
 if uploaded:
+    # Read uploaded file into BytesIO to ensure compatibility
+    try:
+        file_bytes = uploaded.read()
+        df_in = pd.read_excel(BytesIO(file_bytes), header=None, engine='openpyxl')
+    except Exception:
+        # fallback without specifying engine
+        df_in = pd.read_excel(BytesIO(file_bytes), header=None)
+    skus = extract_skus_from_excel(df_in)
     df_in = pd.read_excel(uploaded, header=None)
     skus = extract_skus_from_excel(df_in)
 elif pasted:
