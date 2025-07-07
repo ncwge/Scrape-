@@ -25,7 +25,7 @@ def parse_desc(desc: str) -> dict:
     # Appliance type
     for app in ('microwave','range hood','dishwasher','refrigerator','oven','cooktop','washer','dryer'):
         if app in text: attrs['appliance'] = app; break
-    # Features
+    # Description features
     for t in tokens:
         t = t.strip()
         if 'cfm' in t: attrs.setdefault('blower', []).append(t)
@@ -38,17 +38,28 @@ def parse_desc(desc: str) -> dict:
         elif 'ul listed' in t or 'cul listed' in t: attrs.setdefault('certifications', []).append(t)
     return attrs
 
-# --- Sidebar scraping utility ---
-def scrape_sidebar(soup: BeautifulSoup) -> dict:
+# --- Sidebar & Spec scraping utility ---
+def scrape_specs(soup: BeautifulSoup) -> dict:
     """
-    Extract all <dt>/<dd> pairs from the public HTML, capturing sidebar specs.
+    Extract specs from <dl> lists and any bold label spans (e.g., Height: spans).
     """
     data = {}
-    # Find every definition list on the page
+    # 1) Scrape all dt/dd pairs
     for dl in soup.find_all('dl'):
         for dt, dd in zip(dl.find_all('dt'), dl.find_all('dd')):
             key = dt.get_text(strip=True).rstrip(':').lower().replace(' ', '_')
             data[key] = dd.get_text(strip=True)
+    # 2) Scrape any <span class="bold black">Label:</span>Value siblings
+    for span in soup.select('span.bold.black'):
+        label = span.get_text(strip=True).rstrip(':')
+        parent = span.parent
+        # get the rest of the text in the parent, after the span
+        full = parent.get_text(separator=' ', strip=True)
+        # remove the label from the full text
+        value = full[len(span.get_text()):].strip()
+        key = label.lower().replace(' ', '_')
+        if value:
+            data[key] = value
     return data
 
 # --- UI ---
@@ -56,50 +67,50 @@ sku = st.text_input("Enter SKU (model number)", placeholder="e.g. CJE23DP2WS1").
 if st.button("Fetch") and sku:
     st.info(f"Fetching data for SKU: {sku}")
     url = f"https://www.ajmadison.com/cgi-bin/ajmadison/{sku}.html"
-    headers = {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Referer": "https://www.ajmadison.com/"
-    }
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "Referer": "https://www.ajmadison.com/"}
     try:
         resp = requests.get(url, headers=headers, timeout=10)
         resp.raise_for_status()
         html = resp.text
     except Exception as e:
         st.error(f"Failed to load product page: {e}")
-    else:
-        soup = BeautifulSoup(html, "html.parser")
-        # JSON-LD fallback
-        ld_json = None
-        for tag in soup.select('script[type="application/ld+json"]'):
-            try:
-                d = json.loads(tag.string or tag.text)
-            except: continue
-            recs = d if isinstance(d,list) else [d]
-            for rec in recs:
-                if rec.get("@type") == "Product": ld_json = rec; break
-            if ld_json: break
+        return
+    soup = BeautifulSoup(html, "html.parser")
+    # JSON-LD fallback
+    ld_json = None
+    for tag in soup.select('script[type="application/ld+json"]'):
+        try:
+            d = json.loads(tag.string or tag.text)
+        except:
+            continue
+        recs = d if isinstance(d, list) else [d]
+        for rec in recs:
+            if rec.get("@type") == "Product":
+                ld_json = rec
+                break
         if ld_json:
-            brand = ld_json.get('brand',{}).get('name','n/a')
-            model = ld_json.get('sku', sku)
-            description = ld_json.get('description','n/a')
-        else:
-            title = soup.title.string if soup.title else ''
-            main = title.split('|')[0].strip()
-            parts = main.split(' ',2)
-            brand,model,description = (parts+[sku,'n/a'])[0:3]
-        st.subheader("Results")
-        st.write(f"**Brand:** {brand}")
-        st.write(f"**Model:** {model}")
-        st.write(f"**Description:** {description}")
-        # Extract all attributes
-        parsed = parse_desc(description)
-        sidebar = scrape_sidebar(soup)
-        combined = {**sidebar, **parsed}
-        if combined:
-            st.subheader("All Extracted Attributes")
-            rows = [{"Attribute": k.replace('_',' ').capitalize(), "Value": v} for k,v in combined.items()]
-            df = pd.DataFrame(rows)
-            st.table(df)
-        else:
-            st.info("No attributes found.")
+            break
+    if ld_json:
+        brand = ld_json.get('brand', {}).get('name', 'n/a')
+        model = ld_json.get('sku', sku)
+        description = ld_json.get('description', 'n/a')
+    else:
+        title = soup.title.string if soup.title else ''
+        main = title.split('|')[0].strip()
+        parts = main.split(' ', 2)
+        brand, model, description = (parts + [sku, 'n/a'])[:3]
+    st.subheader("Results")
+    st.write(f"**Brand:** {brand}")
+    st.write(f"**Model:** {model}")
+    st.write(f"**Description:** {description}")
+    # Combine parsed description and scraped specs
+    parsed = parse_desc(description)
+    specs = scrape_specs(soup)
+    combined = {**specs, **parsed}
+    if combined:
+        st.subheader("All Extracted Attributes")
+        rows = [{"Attribute": k.replace('_', ' ').capitalize(), "Value": v} for k, v in combined.items()]
+        df = pd.DataFrame(rows)
+        st.table(df)
+    else:
+        st.info("No attributes found.")
