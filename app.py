@@ -20,6 +20,7 @@ if st.button("Fetch") and sku:
         st.error(f"Failed to load product page: {e}")
     else:
         soup = BeautifulSoup(html, "html.parser")
+
         # Extract Brand & Model from page <title>
         title = soup.title.string if soup.title else ''
         # Title typically: "Brand Model Description | AJMadison"
@@ -28,18 +29,18 @@ if st.button("Fetch") and sku:
         model = parts[1] if len(parts) > 1 else sku
         description = parts[2] if len(parts) > 2 else 'n/a'
 
-                # Display results
+        # Display results
         st.subheader("Results")
         st.write(f"**Brand:** {brand}")
         st.write(f"**Model:** {model}")
         st.write(f"**Description:** {description}")
 
-                # Now parse the "Quick Specs" section under the ratings
+        # Now parse the "Quick Specs" section under the ratings
         specs = {}
-        # Find the heading containing "quick specs"
+        # Find the heading containing "Quick Specs"
         heading = soup.find(lambda tag: tag.name in ["h2","strong","b","div"] and "quick specs" in tag.get_text(strip=True).lower())
         if heading:
-            # The quick specs are typically in a nearby dl or list
+            # The quick specs are typically in a nearby dl
             container = heading.find_next_sibling()
             if container and container.name == 'dl':
                 for dt, dd in zip(container.find_all('dt'), container.find_all('dd')):
@@ -47,15 +48,15 @@ if st.button("Fetch") and sku:
                     value = dd.get_text(strip=True)
                     specs[label] = value
             else:
-                # fallback: look for pairs anywhere after heading
-                dts = soup.select('dt')
-                for dt in dts:
+                # fallback: look for dt/dd pairs after heading
+                for dt in soup.find_all('dt'):
                     if dt.find_previous(text=lambda t: 'quick specs' in t.lower()):
                         dd = dt.find_next_sibling('dd')
                         if dd:
                             label = dt.get_text(strip=True).rstrip(':')
                             specs[label] = dd.get_text(strip=True)
-        
+
+        # Display Quick Specs
         if specs:
             st.subheader("Quick Specs")
             for label, value in specs.items():
