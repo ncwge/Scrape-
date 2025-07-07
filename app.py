@@ -41,31 +41,14 @@ def parse_desc(desc: str) -> dict:
 # --- Sidebar scraping utility ---
 def scrape_sidebar(soup: BeautifulSoup) -> dict:
     """
-    Extract sections from the left sidebar (public HTML) by targeting known containers.
+    Extract all <dt>/<dd> pairs from the public HTML, capturing sidebar specs.
     """
     data = {}
-    # Product Information & Appearance
-    pi = soup.select_one('div.product-information')
-    if pi:
-        for block in pi.select('div.section-block'):
-            title_tag = block.select_one('.section-title')
-            dl = block.select_one('dl')
-            if not title_tag or not dl: continue
-            section = title_tag.get_text(strip=True)
-            for dt, dd in zip(dl.select('dt'), dl.select('dd')):
-                key = f"{section}_{dt.get_text(strip=True).rstrip(':')}".lower().replace(' ', '_')
-                data[key] = dd.get_text(strip=True)
-    # Some pages use a different wrapper for specs
-    specs = soup.select_one('#specifications_content')
-    if specs:
-        for block in specs.select('div.section-block'):
-            title_tag = block.select_one('.section-title')
-            dl = block.select_one('dl')
-            if not title_tag or not dl: continue
-            section = title_tag.get_text(strip=True)
-            for dt, dd in zip(dl.select('dt'), dl.select('dd')):
-                key = f"{section}_{dt.get_text(strip=True).rstrip(':')}".lower().replace(' ', '_')
-                data[key] = dd.get_text(strip=True)
+    # Find every definition list on the page
+    for dl in soup.find_all('dl'):
+        for dt, dd in zip(dl.find_all('dt'), dl.find_all('dd')):
+            key = dt.get_text(strip=True).rstrip(':').lower().replace(' ', '_')
+            data[key] = dd.get_text(strip=True)
     return data
 
 # --- UI ---
