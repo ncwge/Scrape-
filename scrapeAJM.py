@@ -88,6 +88,7 @@ elif pasted:
     skus = extract_skus_from_text(pasted)
 else:
     skus = []
+    skus = []
     skus = extract_skus_from_text(pasted)
 
 if skus:
