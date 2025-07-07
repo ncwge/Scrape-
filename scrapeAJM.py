@@ -28,22 +28,26 @@ def scrape_specs(soup: BeautifulSoup) -> dict:
         key = label.lower().replace(' ', '_')
         if value:
             data[key] = value
-        # 3) Extract List Price from schema.org Offer block
+            # 3) Extract only the List Price from Schema.org Offer block
     offer_table = soup.select_one('table[itemtype="https://schema.org/Offer"]')
     if offer_table:
         for tr in offer_table.select('tr'):
             tds = tr.find_all('td')
             if len(tds) >= 2:
-                label = tds[0].get_text(strip=True).rstrip(':').lower().replace(' ', '_')
+                # only process the List Price row
+                label_text = tds[0].get_text(strip=True).rstrip(':').lower()
+                if label_text != 'list price':
+                    continue
                 price_td = tds[1]
-                # try <del> tag
+                # prefer the <del> MSRP value if present
                 del_tag = price_td.find('del')
                 if del_tag:
                     price = del_tag.get_text(strip=True)
                 else:
                     meta_price = price_td.find('meta', attrs={'itemprop': 'price'})
                     price = meta_price['content'] if meta_price else price_td.get_text(strip=True)
-                data[label] = price
+                data['list_price'] = price
+                break
     return data
 
 # --- UI ---
