@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
+import json
 
 st.set_page_config(page_title="AJMadison SKU Lookup", layout="centered")
 st.title("AJMadison SKU Lookup")
@@ -12,39 +13,30 @@ if st.button("Fetch") and sku:
     try:
         resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
         resp.raise_for_status()
-    except requests.HTTPError as e:
-        st.error(f"Error fetching page: {e}")
+    except Exception as e:
+        st.error(f"Could not fetch product page: {e}")
     else:
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        # Brand from vendorLogo or brand-logo img alt
-        brand_img = soup.select_one(".vendorLogo img, .brand-logo img")
-        brand = brand_img["alt"].strip() if brand_img and brand_img.has_attr("alt") else "n/a"
+        # Find JSON-LD Product metadata
+        ld_json = None
+        for tag in soup.find_all("script", type="application/ld+json"):
+            try:
+                data = json.loads(tag.string)
+                if isinstance(data, dict) and data.get("@type") == "Product":
+                    ld_json = data
+                    break
+            except Exception:
+                continue
 
-        # Model from .sku (or fallback to dt:Model + dd)
-        model_el = soup.select_one(".sku, .product-sku")
-        if not model_el:
-            dt = soup.find("dt", string=lambda t: t and "Model" in t)
-            model_el = dt.find_next_sibling("dd") if dt else None
-        model = model_el.get_text(strip=True) if model_el else "n/a"
-
-        # Description from prodDesc / longdesc / shortDescription
-        desc_el = (
-            soup.select_one("#productDescription") or
-            soup.select_one(".prodDesc") or
-            soup.select_one(".longdesc") or
-            soup.select_one(".shortDescription")
-        )
-        if desc_el:
-            paras = desc_el.find_all("p")
-            if paras:
-                description = " ".join(p.get_text(strip=True) for p in paras)
-            else:
-                description = desc_el.get_text(" ", strip=True)
+        if not ld_json:
+            st.error("Product metadata not found on page.")
         else:
-            description = "n/a"
+            brand       = ld_json.get("brand", {}).get("name") or ld_json.get("manufacturer", {}).get("name", "n/a")
+            model       = ld_json.get("sku", "n/a")
+            description = ld_json.get("description", "n/a")
 
-        st.subheader("Results")
-        st.write("**Brand:**", brand)
-        st.write("**Model:**", model)
-        st.write("**Description:**", description)
+            st.subheader("Results")
+            st.write("**Brand:**", brand)
+            st.write("**Model:**", model)
+            st.write("**Description:**", description)
