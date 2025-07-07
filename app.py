@@ -1,3 +1,4 @@
+import re
 import streamlit as st
 import requests
 import json
@@ -6,13 +7,46 @@ from bs4 import BeautifulSoup
 st.set_page_config(page_title="AJMadison SKU Lookup", layout="centered")
 st.title("AJMadison SKU Lookup")
 
+# --- Parsing utility ---
+def parse_desc(desc: str) -> dict:
+    """
+    Simple rule-based parser to extract attributes from the product description.
+    Returns a dict of features like size, mount, blower, speeds, lighting, filters, install_time, venting,
+    certifications, finish, etc.
+    """
+    tokens = re.split(r',| and ', desc.lower())
+    attrs = {}
+    for t in tokens:
+        t = t.strip()
+        if m := re.search(r"(\d+)\s*inch", t):
+            attrs['size'] = m.group(0)
+        elif 'under cabinet' in t:
+            attrs['mount'] = 'under cabinet'
+        elif 'cfm' in t:
+            attrs['blower'] = t
+        elif 'speed' in t:
+            attrs.setdefault('speeds', []).append(t)
+        elif 'incandes' in t:
+            attrs.setdefault('lighting', []).append('incandescent')
+        elif 'dishwasher safe' in t:
+            attrs.setdefault('filters', []).append('dishwasher safe')
+        elif re.search(r'\d+-minute', t):
+            attrs['install_time'] = t
+        elif 'convertible vent' in t:
+            attrs['venting'] = 'convertible'
+        elif t in ('ul listed', 'aham verified'):
+            attrs.setdefault('certifications', []).append(t)
+        elif 'stainless steel' in t:
+            attrs['finish'] = 'stainless steel'
+        # Add more rules as needed
+    return attrs
+
 # Let user input model number (SKU)
 sku = st.text_input("Enter SKU (model number)", placeholder="e.g. CJE23DP2WS1").strip().upper()
 
 if st.button("Fetch") and sku:
     st.info(f"Fetching data for SKU: {sku}")
 
-    # Correct CGI-bin HTML page URL
     url = f"https://www.ajmadison.com/cgi-bin/ajmadison/{sku}.html"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
@@ -27,7 +61,7 @@ if st.button("Fetch") and sku:
         st.error(f"Failed to load product page: {e}")
     else:
         soup = BeautifulSoup(html, "html.parser")
-                # Attempt embedded JSON-LD for Product
+        # Attempt embedded JSON-LD for Product
         ld_json = None
         for tag in soup.select('script[type="application/ld+json"]'):
             try:
@@ -47,7 +81,7 @@ if st.button("Fetch") and sku:
             model = ld_json.get('sku', sku)
             description = ld_json.get('description', 'n/a')
         else:
-            # Fallback: parse page <title> (format: "Brand Model Description | AJMadison")
+            # Fallback: parse page <title>
             title = soup.title.string if soup.title else ''
             main = title.split('|')[0].strip()
             parts = main.split(' ', 2)
@@ -60,3 +94,8 @@ if st.button("Fetch") and sku:
         st.write(f"**Brand:** {brand}")
         st.write(f"**Model:** {model}")
         st.write(f"**Description:** {description}")
+
+        # Parse and display structured attributes
+        parsed = parse_desc(description)
+        st.subheader("Parsed Attributes")
+        st.json(parsed)
