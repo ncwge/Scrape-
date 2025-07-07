@@ -9,56 +9,86 @@ st.title("AJMadison SKU Lookup")
 sku = st.text_input("Enter SKU", placeholder="e.g. CJE23DP2WS1").strip().upper()
 
 if st.button("Fetch") and sku:
-    url = f"https://www.ajmadison.com/cgi-bin/ajmadison/{sku}.html"
+    st.info(f"Looking up SKU: {sku}")
+    # 1. Try official JSON index endpoint
+    details = {}
     try:
-        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
+        json_url = f"https://www.ajmadison.com/cgi-bin/ajmadison/packages.index.json.php?sku={sku}"
+        resp = requests.get(json_url, timeout=5)
         resp.raise_for_status()
-    except Exception as e:
-        st.error(f"Could not fetch product page: {e}")
-    else:
-        soup = BeautifulSoup(resp.text, "html.parser")
+        item = resp.json().get("item", {})
+        if item:
+            details['Brand'] = item.get('brand')
+            details['Model'] = item.get('sku')
+            details['Description'] = item.get('child_label') or item.get('quickspecs', {}).get('Short Description')
+            source = 'JSON API'
+    except Exception:
+        source = None
 
-        # Attempt JSON-LD extraction
-        ld_json = None
-        for tag in soup.find_all("script", type="application/ld+json"):
-            try:
-                data = json.loads(tag.string or tag.text)
-            except Exception:
-                continue
-            # Handle list or dict
-            entries = data if isinstance(data, list) else [data]
-            for entry in entries:
-                if isinstance(entry, dict) and entry.get("@type") == "Product":
-                    ld_json = entry
+    # 2. Fallback: scrape HTML page
+    if not details or not all(details.values()):
+        try:
+            url = f"https://www.ajmadison.com/cgi-bin/ajmadison/{sku}.html"
+            resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+            # JSON-LD
+            ld_json = None
+            for tag in soup.find_all("script", type="application/ld+json"):
+                try:
+                    data = json.loads(tag.string or tag.text)
+                except Exception:
+                    continue
+                entries = data if isinstance(data, list) else [data]
+                for entry in entries:
+                    if entry.get("@type") == "Product":
+                        ld_json = entry
+                        break
+                if ld_json:
                     break
             if ld_json:
-                break
-
-        # If JSON-LD not found, fallback to HTML scraping
-        if ld_json:
-            brand = ld_json.get("brand", {}).get("name") or ld_json.get("manufacturer", {}).get("name") or "n/a"
-            model = ld_json.get("sku") or ld_json.get("mpn") or "n/a"
-            description = ld_json.get("description") or "n/a"
-        else:
-            # Brand from image alt
-            img = soup.select_one('.vendorLogo img, .brand-logo img')
-            brand = img['alt'].strip() if img and img.has_attr('alt') else 'n/a'
-            # Model from page text
-            model_el = soup.select_one('.sku, .product-sku')
-            if not model_el:
-                dt = soup.find('dt', string=lambda t: t and 'Model' in t)
-                model_el = dt.find_next_sibling('dd') if dt else None
-            model = model_el.get_text(strip=True) if model_el else 'n/a'
-            # Description block
-            desc_el = soup.select_one('#productDescription, .prodDesc, .longdesc, .shortDescription')
-            if desc_el:
-                paras = desc_el.find_all('p')
-                description = ' '.join(p.get_text(strip=True) for p in paras) if paras else desc_el.get_text(' ', strip=True)
+                details['Brand'] = ld_json.get("brand", {}).get("name")
+                details['Model'] = ld_json.get('sku')
+                details['Description'] = ld_json.get('description')
+                source = 'JSON-LD'
             else:
-                description = 'n/a'
+                # HTML selectors
+                brand_img = soup.select_one('.vendorLogo img, .brand-logo img')
+                details['Brand'] = brand_img['alt'].strip() if brand_img and brand_img.has_attr('alt') else None
+                model_el = soup.select_one('.sku, .product-sku')
+                details['Model'] = model_el.get_text(strip=True) if model_el else None
+                desc_el = soup.select_one('#productDescription, .prodDesc, .longdesc, .shortDescription')
+                if desc_el:
+                    paras = desc_el.find_all('p')
+                    details['Description'] = ' '.join(p.get_text(strip=True) for p in paras) if paras else desc_el.get_text(' ', strip=True)
+                source = 'HTML scrape'
+        except Exception:
+            pass
 
-        # Display results
-        st.subheader("Results")
-        st.write("**Brand:**", brand)
-        st.write("**Model:**", model)
-        st.write("**Description:**", description)
+    # 3. Additional API tests (e.g., BazaarVoice)
+    try:
+        rv_url = "https://api.bazaarvoice.com/data/reviews.json"
+        rv_params = {
+            "apiversion": "5.4",
+            "Include": "Products,Stats",
+            "limit": 1,
+            "passkey": "7ezgnan69w4utwmyum0qtdl6u",
+            "filter": f"ProductId:eq:{sku}",
+            "sort": "Helpfulness:desc",
+            "offset": 0
+        }
+        rv = requests.get(rv_url, params=rv_params, timeout=5).json()
+        top = rv.get('Results', [])
+        if top:
+            details['TopReview'] = top[0].get('ReviewText')
+    except Exception:
+        pass
+
+    # Display results
+    st.subheader("Results")
+    if details:
+        for k,v in details.items():
+            st.write(f"**{k}:** {v or 'n/a'}")
+        st.caption(f"(Retrieved via {source or 'multiple methods'})")
+    else:
+        st.error("Unable to retrieve data for that SKU from available sources.")
