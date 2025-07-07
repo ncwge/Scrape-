@@ -84,11 +84,34 @@ if st.button("Fetch") and sku:
     except Exception:
         pass
 
-    # Display results
+        # Display results
     st.subheader("Results")
     if details:
-        for k,v in details.items():
+        for k, v in details.items():
             st.write(f"**{k}:** {v or 'n/a'}")
         st.caption(f"(Retrieved via {source or 'multiple methods'})")
     else:
         st.error("Unable to retrieve data for that SKU from available sources.")
+
+    # 4. Test additional endpoints and show raw responses
+    st.markdown("---")
+    st.subheader("Raw Endpoint Tests")
+    endpoints = {
+        "Bought Together Sets": "https://www.ajmadison.com/papi/packages/bought-together-sets/index.json.php",
+        "Cart Index": "https://www.ajmadison.com/cart/cart.index.json.php",
+        "Product List": "https://www.ajmadison.com/papi/products/list.json.php",
+        "BazaarVoice Reviews": rv_url,
+    }
+    for name, ep in endpoints.items():
+        try:
+            if name == "BazaarVoice Reviews":
+                r = requests.get(ep, params=rv_params, timeout=5)
+            else:
+                r = requests.get(ep, timeout=5)
+            status = r.status_code
+            content = r.text[:500] + ('...' if len(r.text) > 500 else '')
+        except Exception as e:
+            status = 'ERROR'
+            content = str(e)
+        st.write(f"**{name}** (Status: {status})")
+        st.code(content, language='json')
