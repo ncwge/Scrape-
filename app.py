@@ -31,7 +31,11 @@ if st.button("Fetch") and sku:
     if not details or not all(details.values()):
         try:
             url = f"https://www.ajmadison.com/cgi-bin/ajmadison/{sku}.html"
-            resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+            resp = requests.get(url, headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Referer": "https://www.ajmadison.com",
+                    "Accept": "text/html,application/xhtml+xml"
+                }, timeout=10)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "html.parser")
 
