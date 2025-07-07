@@ -18,34 +18,47 @@ if st.button("Fetch") and sku:
     else:
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        # Find JSON-LD that describes the product
+        # Attempt JSON-LD extraction
         ld_json = None
         for tag in soup.find_all("script", type="application/ld+json"):
-            text = tag.string or tag.text
             try:
-                data = json.loads(text)
+                data = json.loads(tag.string or tag.text)
             except Exception:
                 continue
-            # JSON-LD might be a list or a dict
-            candidates = data if isinstance(data, list) else [data]
-            for entry in candidates:
+            # Handle list or dict
+            entries = data if isinstance(data, list) else [data]
+            for entry in entries:
                 if isinstance(entry, dict) and entry.get("@type") == "Product":
                     ld_json = entry
                     break
             if ld_json:
                 break
 
-        if not ld_json:
-            st.error("Product metadata not found on page.")
-        else:
-            # Extract fields from JSON-LD
-            brand = (ld_json.get("brand", {}).get("name")
-                     or ld_json.get("manufacturer", {}).get("name")
-                     or "n/a")
+        # If JSON-LD not found, fallback to HTML scraping
+        if ld_json:
+            brand = ld_json.get("brand", {}).get("name") or ld_json.get("manufacturer", {}).get("name") or "n/a"
             model = ld_json.get("sku") or ld_json.get("mpn") or "n/a"
             description = ld_json.get("description") or "n/a"
+        else:
+            # Brand from image alt
+            img = soup.select_one('.vendorLogo img, .brand-logo img')
+            brand = img['alt'].strip() if img and img.has_attr('alt') else 'n/a'
+            # Model from page text
+            model_el = soup.select_one('.sku, .product-sku')
+            if not model_el:
+                dt = soup.find('dt', string=lambda t: t and 'Model' in t)
+                model_el = dt.find_next_sibling('dd') if dt else None
+            model = model_el.get_text(strip=True) if model_el else 'n/a'
+            # Description block
+            desc_el = soup.select_one('#productDescription, .prodDesc, .longdesc, .shortDescription')
+            if desc_el:
+                paras = desc_el.find_all('p')
+                description = ' '.join(p.get_text(strip=True) for p in paras) if paras else desc_el.get_text(' ', strip=True)
+            else:
+                description = 'n/a'
 
-            st.subheader("Results")
-            st.write("**Brand:**", brand)
-            st.write("**Model:**", model)
-            st.write("**Description:**", description)
+        # Display results
+        st.subheader("Results")
+        st.write("**Brand:**", brand)
+        st.write("**Model:**", model)
+        st.write("**Description:**", description)
