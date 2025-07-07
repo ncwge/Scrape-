@@ -5,6 +5,8 @@ import json
 from bs4 import BeautifulSoup
 import pandas as pd
 from io import BytesIO
+import time
+import random
 
 # --- Page Setup ---
 st.set_page_config(page_title="AJMadison SKU Lookup & Batch Extractor", layout="centered")
@@ -33,23 +35,41 @@ def extract_skus_from_text(text: str) -> list:
                 seen.add(m)
     return skus
 
+# --- Session Setup to Avoid 403 ---
+session = requests.Session()
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/115.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:102.0) Gecko/20100101 Firefox/102.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_4) AppleWebKit/605.1.15 Version/16.4 Safari/605.1.15"
+]
+BASE_HEADERS = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Referer": "https://www.ajmadison.com/",
+    "Connection": "keep-alive"
+}
+# Prime the session
+session.headers.update({"User-Agent": random.choice(USER_AGENTS), **BASE_HEADERS})
+try:
+    session.get("https://www.ajmadison.com/", timeout=10)
+    # optionally fetch main CSS/JS
+    session.get("https://www.ajmadison.com/css/site.css", timeout=10)
+except:
+    pass
+
 # --- Spec Scraper ---
 def scrape_specs(soup: BeautifulSoup) -> dict:
     data = {}
-    # scrape all dl dt/dd pairs
     for dl in soup.find_all('dl'):
         for dt, dd in zip(dl.find_all('dt'), dl.find_all('dd')):
             key = dt.get_text(strip=True).rstrip(':').lower().replace(' ', '_')
             data[key] = dd.get_text(strip=True)
-    # scrape bold black spans
     for span in soup.select('span.bold.black'):
         label = span.get_text(strip=True).rstrip(':')
-        parent = span.parent
-        full = parent.get_text(separator=' ', strip=True)
-        value = full[len(span.get_text()):].strip()
+        value = span.parent.get_text(separator=' ', strip=True)[len(span.get_text()):].strip()
         if value:
             data[label.lower().replace(' ', '_')] = value
-    # list price
     offer = soup.select_one('table[itemtype="https://schema.org/Offer"]')
     if offer:
         for tr in offer.select('tr'):
@@ -57,12 +77,8 @@ def scrape_specs(soup: BeautifulSoup) -> dict:
             if len(tds) < 2: continue
             label = tds[0].get_text(strip=True).rstrip(':').lower()
             if label == 'list price':
-                price_td = tds[1]
-                del_tag = price_td.find('del')
-                price = del_tag.get_text(strip=True) if del_tag else (
-                    price_td.find('meta', {'itemprop':'price'})['content']
-                    if price_td.find('meta', {'itemprop':'price'}) else price_td.get_text(strip=True)
-                )
+                del_tag = tds[1].find('del')
+                price = del_tag.get_text(strip=True) if del_tag else tds[1].find('meta', {'itemprop':'price'})['content']
                 data['list_price'] = price
                 break
     return data
@@ -71,64 +87,42 @@ def scrape_specs(soup: BeautifulSoup) -> dict:
 st.header("Batch Competitor SKU Extractor")
 col1, col2 = st.columns(2)
 with col1:
-    uploaded = st.file_uploader("Upload Excel file of SKUs", type=["xls","xlsx"])  
+    uploaded = st.file_uploader("Upload Excel file of SKUs", type=["xls","xlsx"])
 with col2:
-    pasted  = st.text_area("Or paste SKUs here (one per line)")
+    pasted = st.text_area("Or paste SKUs here (one per line)")
 
-# Determine SKUs list
+# Determine SKUs
+skus = []
 if uploaded:
-    file_bytes = uploaded.read()
+    bytes_data = uploaded.read()
     try:
-        df_in = pd.read_excel(BytesIO(file_bytes), header=None, engine='openpyxl')
-    except Exception:
-        df_in = pd.read_excel(BytesIO(file_bytes), header=None)
+        df_in = pd.read_excel(BytesIO(bytes_data), header=None, engine='openpyxl')
+    except:
+        df_in = pd.read_excel(BytesIO(bytes_data), header=None)
     skus = extract_skus_from_excel(df_in)
 elif pasted:
     skus = extract_skus_from_text(pasted)
-else:
-    skus = []
 
 # Display batch results
-# Initialize a persistent session to avoid 403s
-session = requests.Session()
-session.headers.update({
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Referer": "https://www.ajmadison.com/",
-    "Connection": "keep-alive",
-})
-# Prime the session with a homepage request
-try:
-    session.get("https://www.ajmadison.com/", timeout=10)
-except:
-    pass
-
-import time
 if skus:
-    st.success(f"Found {len(skus)} SKUs.")
+    st.success(f"Found {len(skus)} SKUs. Processing...")
     for sku in skus:
         with st.expander(f"Details for {sku}"):
+            # rotate UA and headers
+            session.headers.update({"User-Agent": random.choice(USER_AGENTS), **BASE_HEADERS})
             try:
-                resp = session.get(
-                    f"https://www.ajmadison.com/cgi-bin/ajmadison/{sku}.html",
-                    timeout=10
-                )
+                resp = session.get(f"https://www.ajmadison.com/cgi-bin/ajmadison/{sku}.html", timeout=10)
                 resp.raise_for_status()
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 specs = scrape_specs(soup)
                 if specs:
-                    df_specs = pd.DataFrame([
-                        {"Attribute": k.replace('_',' ').capitalize(), "Value": v}
-                        for k,v in specs.items()
-                    ])
+                    df_specs = pd.DataFrame([{"Attribute": k.replace('_',' ').capitalize(), "Value": v} for k,v in specs.items()])
                     st.table(df_specs)
                 else:
                     st.warning("No specs found.")
             except Exception as e:
                 st.error(f"Failed to fetch {sku}: {e}")
-            time.sleep(0.5)
+            time.sleep(random.uniform(1.5, 4.0))
 else:
     st.info("Upload or paste SKUs to begin batch extraction.")
 
@@ -138,29 +132,16 @@ st.header("Single AJMadison SKU Lookup")
 single_sku = st.text_input("Enter single SKU (e.g. JVX3300SJSS)").strip().upper()
 if st.button("Fetch Single SKU") and single_sku:
     st.info(f"Fetching details for {single_sku}...")
+    session.headers.update({"User-Agent": random.choice(USER_AGENTS), **BASE_HEADERS})
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Referer": "https://www.ajmadison.com/"
-        }
-        resp = requests.get(
-            f"https://www.ajmadison.com/cgi-bin/ajmadison/{single_sku}.html",
-            headers=headers,
-            timeout=10
-        )
+        resp = session.get(f"https://www.ajmadison.com/cgi-bin/ajmadison/{single_sku}.html", timeout=10)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, 'html.parser')
         specs = scrape_specs(soup)
         if specs:
-            df_single = pd.DataFrame([
-                {"Attribute": k.replace('_',' ').capitalize(), "Value": v}
-                for k,v in specs.items()
-            ])
+            df_single = pd.DataFrame([{"Attribute": k.replace('_',' ').capitalize(), "Value": v} for k,v in specs.items()])
             st.table(df_single)
         else:
             st.warning("No specs found.")
-    except requests.exceptions.HTTPError as http_err:
-        st.error(f"HTTP error for {single_sku}: {http_err}")
     except Exception as e:
         st.error(f"Failed to fetch {single_sku}: {e}")
