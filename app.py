@@ -34,29 +34,31 @@ if st.button("Fetch") and sku:
         st.write(f"**Model:** {model}")
         st.write(f"**Description:** {description}")
 
-        # Now parse the Product Information table for additional specs
+                # Now parse the "Quick Specs" section under the ratings
         specs = {}
-        # look for table by caption or id
-        table = soup.find('table', id='productInformation') or soup.find('table', class_='ProductInformation')
-        if table:
-            for row in table.find_all('tr'):
-                cols = row.find_all('td')
-                if len(cols) == 2:
-                    label = cols[0].get_text(strip=True).rstrip(':')
-                    value = cols[1].get_text(strip=True)
-                    specs[label] = value
-        else:
-            # fallback: dt/dd pairs under a div
-            for dt in soup.select('dt'):
-                dd = dt.find_next_sibling('dd')
-                if dd:
+        # Find the heading containing "quick specs"
+        heading = soup.find(lambda tag: tag.name in ["h2","strong","b","div"] and "quick specs" in tag.get_text(strip=True).lower())
+        if heading:
+            # The quick specs are typically in a nearby dl or list
+            container = heading.find_next_sibling()
+            if container and container.name == 'dl':
+                for dt, dd in zip(container.find_all('dt'), container.find_all('dd')):
                     label = dt.get_text(strip=True).rstrip(':')
                     value = dd.get_text(strip=True)
                     specs[label] = value
-
+            else:
+                # fallback: look for pairs anywhere after heading
+                dts = soup.select('dt')
+                for dt in dts:
+                    if dt.find_previous(text=lambda t: 'quick specs' in t.lower()):
+                        dd = dt.find_next_sibling('dd')
+                        if dd:
+                            label = dt.get_text(strip=True).rstrip(':')
+                            specs[label] = dd.get_text(strip=True)
+        
         if specs:
-            st.subheader("Additional Specs")
+            st.subheader("Quick Specs")
             for label, value in specs.items():
                 st.write(f"**{label}:** {value}")
         else:
-            st.info("No additional product specs found on the page.")
+            st.info("No Quick Specs found on the page.")
