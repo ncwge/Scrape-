@@ -25,7 +25,7 @@ def parse_desc(desc: str) -> dict:
     if m := re.search(r"(\d+)\s*inch", text):
         attrs['size'] = m.group(0)
 
-    # Detect color/finish
+    # Detect color/finish first
     colors = ['black', 'white', 'stainless steel', 'gray', 'silver', 'white-on-white']
     for color in colors:
         if color in text:
@@ -63,13 +63,31 @@ def parse_desc(desc: str) -> dict:
             attrs.setdefault('features', []).append('quick start')
         elif 'auto cook' in t:
             attrs.setdefault('features', []).append('auto cook')
-        elif any(cert in t for cert in ('ul listed', 'cul listed', 'list')):
+        elif 'ul listed' in t or 'cul listed' in t:
             attrs.setdefault('certifications', []).append(t)
-        # Additional color fallback: if finish mentioned separately
-        elif 'stainless steel' in t:
+        elif 'stainless steel' in t and 'color' not in attrs:
             attrs['finish'] = 'stainless steel'
-        # add more generic rules as needed
     return attrs
+
+# --- Sidebar scraping utility ---
+def scrape_sidebar(soup: BeautifulSoup, sections: list) -> dict:
+    """
+    Extract dt/dd pairs under given section headings.
+    Returns a flat dict of {key: value}.
+    """
+    data = {}
+    for section in sections:
+        header = soup.find(lambda tag: tag.name in ['h2', 'h3', 'h4'] and section.lower() in tag.get_text(strip=True).lower())
+        if not header:
+            continue
+        dl = header.find_next_sibling('dl')
+        if not dl:
+            continue
+        for dt, dd in zip(dl.find_all('dt'), dl.find_all('dd')):
+            key = f"{section}_{dt.get_text(strip=True).rstrip(':')}".lower().replace(' ', '_')
+            value = dd.get_text(strip=True)
+            data[key] = value
+    return data
 
 # --- UI ---
 sku = st.text_input("Enter SKU (model number)", placeholder="e.g. CJE23DP2WS1").strip().upper()
@@ -91,7 +109,8 @@ if st.button("Fetch") and sku:
         st.error(f"Failed to load product page: {e}")
     else:
         soup = BeautifulSoup(html, "html.parser")
-        # Find JSON-LD Product
+
+        # JSON-LD fallback
         ld_json = None
         for tag in soup.select('script[type="application/ld+json"]'):
             try:
@@ -123,19 +142,20 @@ if st.button("Fetch") and sku:
         st.write(f"**Model:** {model}")
         st.write(f"**Description:** {description}")
 
-        # Parse description
+        # Parsed description attributes
         parsed = parse_desc(description)
-        if parsed:
-            st.subheader("Parsed Attributes")
-            # Convert to table
+        # Scrape sidebar sections
+        sections = ["Product Information", "Appearance", "Dimensions", "Smart", "Capacity", "Features", "Technical Details"]
+        sidebar_data = scrape_sidebar(soup, sections)
+
+        # Combine and show
+        combined = {**sidebar_data, **parsed}
+        if combined:
+            st.subheader("All Extracted Attributes")
             rows = []
-            for key, val in parsed.items():
-                if isinstance(val, list):
-                    val_str = ", ".join(val)
-                else:
-                    val_str = val
-                rows.append({"Attribute": key.capitalize(), "Value": val_str})
+            for key, val in combined.items():
+                rows.append({"Attribute": key.replace('_', ' ').capitalize(), "Value": val})
             df = pd.DataFrame(rows)
             st.table(df)
         else:
-            st.info("No attributes parsed.")
+            st.info("No attributes found.")
