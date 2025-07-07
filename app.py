@@ -1,32 +1,57 @@
 import streamlit as st
 import requests
 import json
+from bs4 import BeautifulSoup
 
-st.set_page_config(page_title="AJMadison SKU Lookup (JSON API)", layout="centered")
-st.title("AJMadison SKU Lookup (JSON API)")
+st.set_page_config(page_title="AJMadison SKU Lookup", layout="centered")
+st.title("AJMadison SKU Lookup")
 
-sku = st.text_input("Enter model number (SKU)", placeholder="e.g. CJE23DP2WS1").strip().upper()
+# User inputs the model number (SKU)
+sku = st.text_input("Enter SKU (model number)", placeholder="e.g. CJE23DP2WS1").strip().upper()
 
 if st.button("Fetch") and sku:
-    st.info(f"Fetching JSON data for SKU: {sku}")
+    st.info(f"Fetching data for SKU: {sku}")
+
+    # Build the CGI-bin product URL dynamically
+    url = f"https://www.ajmadison.com/cgi-bin/ajmadison/{sku}.html"
     try:
-        api_url = f"https://www.ajmadison.com/cgi-bin/ajmadison/index.json.php?sku={sku}"
-        headers = {
-            "Accept": "application/json, text/javascript, */*; q=0.01",
-            "Referer": f"https://www.ajmadison.com/cgi-bin/ajmadison/{sku}.html",
-            "User-Agent": "Mozilla/5.0"
-        }
-        resp = requests.get(api_url, headers=headers, timeout=10)
+        # Fetch the public HTML page
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                   "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                   "Referer": "https://www.ajmadison.com/"}
+        resp = requests.get(url, headers=headers, timeout=10)
         resp.raise_for_status()
-        data = resp.json()
-        item = data.get('item') or data.get('Items') or None
-        if not item:
-            st.error("No JSON data found for this SKU.")
-        else:
-            st.subheader("Results")
-            st.write("**Brand:**", item.get('brand', 'n/a'))
-            st.write("**Model:**", item.get('sku', 'n/a'))
-            desc = item.get('child_label') or item.get('quickspecs', {}).get('Short Description', 'n/a')
-            st.write("**Description:**", desc)
+        html = resp.text
     except Exception as e:
-        st.error(f"Error fetching JSON API: {e}")
+        st.error(f"Failed to load product page: {e}")
+    else:
+        # Parse the HTML and extract the JSON-LD Product block
+        soup = BeautifulSoup(html, "html.parser")
+        ld_json = None
+        for tag in soup.select('script[type="application/ld+json"]'):
+            try:
+                data = json.loads(tag.string or tag.text)
+            except Exception:
+                continue
+            entries = data if isinstance(data, list) else [data]
+            for entry in entries:
+                if entry.get("@type") == "Product":
+                    ld_json = entry
+                    break
+            if ld_json:
+                break
+
+        if not ld_json:
+            st.error("Product metadata not found on page.")
+        else:
+            # Extract brand, model, description from JSON-LD
+            brand = ld_json.get('brand', {}).get('name', 'n/a')
+            model = ld_json.get('sku', sku)
+            description = ld_json.get('description', 'n/a')
+
+            # Display the results
+            st.subheader("Results")
+            st.write(f"**Brand:** {brand}")
+            st.write(f"**Model:** {model}")
+            st.write(f"**Description:** {description}")
+
