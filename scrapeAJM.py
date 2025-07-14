@@ -20,6 +20,7 @@ def scrape_specs(soup: BeautifulSoup) -> dict:
         for dt, dd in zip(dl.find_all('dt'), dl.find_all('dd')):
             key = dt.get_text(strip=True).rstrip(':').lower().replace(' ', '_')
             data[key] = dd.get_text(strip=True)
+
     # 2) Scrape any <span class="bold black">Label:</span>Value siblings
     for span in soup.select('span.bold.black'):
         label = span.get_text(strip=True).rstrip(':')
@@ -29,12 +30,14 @@ def scrape_specs(soup: BeautifulSoup) -> dict:
         key = label.lower().replace(' ', '_')
         if value:
             data[key] = value
+
     # 3) Extract List Price from <td class="right-align table-cell-minified">
     price_td = soup.find("td", class_="right-align table-cell-minified")
     if price_td:
         price_text = price_td.get_text(strip=True)
         if price_text.startswith('$'):
             data["list_price"] = price_text
+
     return data
 
 # --- UI ---
@@ -60,8 +63,20 @@ if st.button("Fetch") and sku:
 
         if specs:
             st.subheader("All Extracted Attributes")
-            rows = [{"Attribute": k.replace('_', ' ').capitalize(), "Value": v}
-                    for k, v in specs.items()]
+
+            # ✅ Ensure list_price is at the top of the table
+            rows = []
+            if "list_price" in specs:
+                rows.append({
+                    "Attribute": "List price",
+                    "Value": specs.pop("list_price")
+                })
+            for k, v in specs.items():
+                rows.append({
+                    "Attribute": k.replace('_', ' ').capitalize(),
+                    "Value": v
+                })
+
             df = pd.DataFrame(rows)
             st.table(df)
         else:
