@@ -11,9 +11,10 @@ st.title("AJMadison SKU Lookup")
 # --- Sidebar & Spec scraping utility ---
 def scrape_specs(soup: BeautifulSoup) -> dict:
     """
-    Extract specs from <dl> lists and any bold label spans (e.g., Height: spans).
+    Extract specs from <dl> lists, bold span labels, and the List Price.
     """
     data = {}
+
     # 1) Scrape all dt/dd pairs
     for dl in soup.find_all('dl'):
         for dt, dd in zip(dl.find_all('dt'), dl.find_all('dd')):
@@ -28,6 +29,12 @@ def scrape_specs(soup: BeautifulSoup) -> dict:
         key = label.lower().replace(' ', '_')
         if value:
             data[key] = value
+    # 3) Extract List Price from <td class="right-align table-cell-minified">
+    price_td = soup.find("td", class_="right-align table-cell-minified")
+    if price_td:
+        price_text = price_td.get_text(strip=True)
+        if price_text.startswith('$'):
+            data["list_price"] = price_text
     return data
 
 # --- UI ---
